@@ -398,3 +398,66 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+ENV/
+env_ade/
+.venv_env_ade/
+.Python
+
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VSCode (caso abras por lá também)
+.vscode/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# MacOS
+.DS_Store
+
+# Logs and dumps
+*.log
+*.bak
+*.tmp
+
+# Environment variable files
+.env
+.env.*
+
+# Output files
+*.pkl
+*.h5
+*.db
+*.sqlite
+*.xlsx
+*.csv
+*.tsv
+
+# Ignore data folders
+/data/*
+!/data/README.md  # keep an empty placeholder if needed
+
+# Ignore model folders
+/models/*
+!/models/README.md
+
+# Ignore figures, generated plots
+/figures/*
+!/figures/README.md
+
+# Test cache
+.pytest_cache/
