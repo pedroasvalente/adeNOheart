@@ -1,84 +1,110 @@
 import os
 import json
 import pandas as pd
-import numpy as np
 import re
 
 # ---------------------------
 # CONFIGURAÇÕES
 # ---------------------------
-folder_path = '../raw'  # pasta onde estão os JSONs
-output_file = '001_1_all_excel.xlsx'  # ficheiro final Excel
+FOLDER_PATH = '../raw'
+OUTPUT_FILE = '001_1_all_excel.xlsx'
 
 # ---------------------------
-# VARIÁVEIS INICIAIS
+# FUNÇÕES
 # ---------------------------
-rows = []
-wavelengths = []
+
+def get_wavenumbers(data_status_params):
+    """Calcula wavenumbers a partir dos parâmetros do JSON."""
+    fxv = data_status_params.get("FXV")
+    lxv = data_status_params.get("LXV")
+    npt = data_status_params.get("NPT")
+
+    if fxv is not None and lxv is not None and npt:
+        return [
+            fxv - ((i * (fxv - lxv)) / (npt - 1))
+            for i in range(npt)
+        ]
+    return []
+
+
+def clean_nam(nam_raw):
+    """Limpa o NAM inicial removendo sufixo após '-' e data prefixo se existir."""
+    if not isinstance(nam_raw, str):
+        return None
+
+    # Remove tudo após o primeiro hífen
+    nam_cleaned = nam_raw.split('-')[0].strip()
+
+    # Se começa com data (8 dígitos + '_'), remove prefixo até 3º bloco
+    if re.match(r'^\d{8}_', nam_cleaned):
+        parts = nam_cleaned.split('_')
+        if len(parts) >= 3:
+            return '_'.join(parts[2:])
+    # Caso contrário, mantém o NAM limpo (sem sufixo)
+    return nam_cleaned
+
+
+def load_json_data(folder_path):
+    """Lê todos os JSONs da pasta, extrai NAM limpo, INS e AB Data."""
+    rows = []
+    wavelengths = []
+
+    for file_name in os.listdir(folder_path):
+        if file_name.lower().endswith('.json'):
+            file_path = os.path.join(folder_path, file_name)
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+
+            sample_origin = data.get("Sample Origin Parameters", {})
+            ab_data = data.get("AB Data", [])
+            status_params = data.get("Data Status Parameters", {})
+
+            # Calcula wavenumbers apenas na primeira iteração
+            if not wavelengths:
+                wavelengths = get_wavenumbers(status_params)
+
+            # Extrai NAM limpo e descarta TMs
+            nam_raw = sample_origin.get("NAM", "")
+            nam_cleaned = clean_nam(nam_raw)
+            # Descartar se contiver TM
+            if nam_cleaned and 'TM' in nam_cleaned.upper():
+                continue
+
+            ins = sample_origin.get("INS", "")
+            row = [nam_cleaned, ins] + ab_data
+            rows.append(row)
+
+    return rows, wavelengths
+
+
+def build_dataframe(rows, wavelengths):
+    """Cria DataFrame e extrai path_length."""
+    df = pd.DataFrame(rows)
+    df.columns = ["NAM", "INS"] + wavelengths
+
+    # Extrai path length
+    df['raw_extracted'] = df['INS'].str.extract(r'path length:\s*([\d\.,]+)', expand=False)
+    df['path_length'] = df['raw_extracted'].str.replace(',', '.').astype(float)
+    df.drop(columns=['raw_extracted', 'INS'], inplace=True)
+    df.insert(1, 'path_length', df.pop('path_length'))
+
+    return df
+
+
+def export_to_excel(df, output_file):
+    """Exporta o DataFrame para ficheiro Excel."""
+    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Main', index=False)
+    print(f"Data exported to '{output_file}' on sheet 'Main'.")
 
 # ---------------------------
-# LEITURA DOS JSONs
+# EXECUÇÃO PRINCIPAL
 # ---------------------------
-for file_name in os.listdir(folder_path):
-    if file_name.endswith('.json'):
-        file_path = os.path.join(folder_path, file_name)
 
-        with open(file_path, 'r') as file:
-            data = json.load(file)
+def main():
+    rows, wavelengths = load_json_data(FOLDER_PATH)
+    df = build_dataframe(rows, wavelengths)
+    export_to_excel(df, OUTPUT_FILE)
 
-        sample_origin_params = data.get("Sample Origin Parameters", {})
-        ab_data = data.get("AB Data", [])
-        data_status_params = data.get("Data Status Parameters", {})
-
-        # Calcula os wavenumbers (só uma vez)
-        if not wavelengths:
-            fxv = data_status_params.get("FXV")
-            lxv = data_status_params.get("LXV")
-            npt = data_status_params.get("NPT")
-
-            wavelengths = [
-                fxv - ((i * (fxv - lxv)) / (npt - 1))
-                for i in range(npt)
-            ]
-
-        row = [sample_origin_params.get("NAM"), sample_origin_params.get("INS")] + ab_data
-        rows.append(row)
-
-# ---------------------------
-# CRIAÇÃO DO DATAFRAME
-# ---------------------------
-df = pd.DataFrame(rows)
-df.columns = ["NAM", "INS"] + wavelengths
-
-# Extrai o path length da coluna INS
-df['raw_extracted'] = df['INS'].str.extract(r'path length:\s*([\d,\.]+)', expand=False)
-df['path_length'] = df['raw_extracted'].str.replace(',', '.').astype(float)
-df.drop(columns=['raw_extracted', 'INS'], inplace=True)
-path_length_series = df.pop('path_length')
-df.insert(1, 'path_length', path_length_series)
-
-# ---------------------------
-# EXTRAI sample_type do NAM
-# ---------------------------
-nam_pattern = r'^(?P<date>\d{8})_+(?P<sample_type>[^_]+)_'
-extracted = df['NAM'].str.extract(nam_pattern)
-sample_type_series = extracted['sample_type']
-
-# ---------------------------
-# SEPARA REGISTOS INVÁLIDOS
-# ---------------------------
-mask_invalid = sample_type_series.isna()
-mask_tm = sample_type_series.notna() & (sample_type_series.str.upper() == 'TM')
-mask_to_check = mask_invalid | mask_tm
-
-to_check = df[mask_to_check].copy()
-df_valid = df[~mask_to_check].copy()
-
-# ---------------------------
-# EXPORTAÇÃO PARA EXCEL
-# ---------------------------
-with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-    df_valid.to_excel(writer, sheet_name='Main', index=False)
-    to_check.to_excel(writer, sheet_name='to_check', index=False)
-
-print(f"Data exported to {output_file} with sheets 'Main' and 'to_check'.")
+if __name__ == '__main__':
+    main()
